@@ -1,0 +1,27 @@
+{
+  "name": "create-API-with-NodeJS",
+  "version": "1.0.0",
+  "description": "一个关于API和Node.js的小培训，编程语言当然是JavaScript，适合初学者。",
+  "main": "1_export.js",
+  "dependencies": {
+    "good": "^8.1.2",
+    "good-console": "^8.0.0",
+    "hapi": "^18.1.0",
+    "request": "^2.88.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyooryoo/create-API-with-NodeJS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kyooryoo/create-API-with-NodeJS/issues"
+  },
+  "homepage": "https://github.com/kyooryoo/create-API-with-NodeJS#readme"
+}

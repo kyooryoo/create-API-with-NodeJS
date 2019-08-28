@@ -197,3 +197,420 @@ async function readFiles() {
 
 readFiles().then(result => console.log(result));
 ```
+
+## 创建API
+
+### TODO列表
+
+* 使用Node.js内建http模块配置Web服务器
+* 为API配置Hapi.js
+* 了解HTTP基本请求类型及其区别
+* 实施HTTP请求，创建多种方式的API路由
+* 为Web应用程序配置日志
+
+### Web服务器
+
+使用Node.js内建的http模块创建Web服务器：
+```
+const http = require('http');
+const server = http.createServer((request, response) => {
+    console.log('Request starting...');
+    response.write('Hello World!');
+    response.end();
+});
+
+server.listen(5000, () => 
+    console.log('Server running at http://localhost:5000'));
+```
+
+运行服务器并导航到本地回环地址的5000端口确认结果：
+```
+$ node 9_http_server.js
+Server running at http://localhost:5000
+Request starting...
+```
+
+### Hapi服务器
+
+这部分要完成如下任务：
+* 创建Hapi.js服务器
+* 使用API客户端
+* 返回JSON字符串
+* 优化开发流程
+* 设置和启用日志
+
+Hapi是HTTP API的缩写，是为API应用优化的HTTP服务器。
+首先生成`package.json`文件：
+```
+$ npm init -y
+```
+接着安装Hapi模块并保存到依赖记录：
+```
+$ npm install hapi --save
+```
+最后写出服务器程序：
+```
+const Hapi = require('hapi');
+const init = async () => {
+
+    const server = Hapi.server({
+        port: 3000,
+        host: 'localhost'
+    });
+
+    server.route({
+        method: 'GET',
+        path:'/',
+        handler: (request, h) => {
+            return { message: 'Hello World!'};
+        }
+    });
+
+    await server.start();
+    console.log('Server running on %s', server.info.uri);
+};
+
+process.on('unhandledRejection', (err) => {
+    console.log(err);
+    process.exit(1);
+});
+
+init();
+```
+
+注意：
+* 以上程序中使用的`async/await`方式启动Hapi服务器
+* 如果没有`server.route`的主页路由会得到`404`错误
+* 主页路由返回的是一个REST API常用的JSON类型数据
+* 如用迭代开发方法，创建路由和返回JSON前可运行测试
+
+#### Nodemon流程
+为简化迭代开发流程，避免每次修改服务器程序代码后重启：
+```
+$ sudo npm install --global nodemon
+$ nodemon 10_hapi_server.js
+[nodemon] 1.19.1
+[nodemon] to restart at any time, enter `rs`
+[nodemon] watching: *.*
+[nodemon] starting `node 10_hapi_server.js`
+Server running on http://localhost:3000
+[nodemon] restarting due to changes...
+[nodemon] starting `node 10_hapi_server.js`
+Server running on http://localhost:3000
+```
+如上，每次修改服务器代码后`node`会自动重新运行程序。
+
+#### Good日志
+为排错或监视程序后台运行状况，配置`Hapi`日志扩展程序：
+```
+$ npm install good good-console --save
+```
+
+更新服务器程序，在服务器启动命令前添加如下代码：
+```
+...
+   const options = {
+        ops: {
+            interval: 100000
+        },
+        reporters: {
+            consoleReporters: [
+                { module: 'good-console' },
+                'stdout'
+            ]
+        }
+    };
+
+    await server.register({
+        plugin: require('good'),
+        options
+    });
+
+    await server.start();
+...
+```
+
+重启Hapi服务器，访问主页或服务器程序更新有日志：
+```
+[nodemon] restarting due to changes...
+[nodemon] starting `node 10_hapi_server.js`
+Server running on http://localhost:3000
+190828/005830.910, (1566953910910:user-asus:7516:jzujw9sm:10000)
+[response] http://localhost:3000: get / {} 200 (34ms)
+```
+
+另外，即便没有即时日志，也会有定期更新的状态日志。
+
+#### Insomnia客户端
+作为测试API的客户端，可选Insomnia或者Postman。
+如果选Insomnia且使用Ubuntu系统，可从软件中心下载。
+
+### HTTP请求和方法
+
+将介绍如何完成以下任务：
+* 获取一个资源列表
+* 获取一个指定资源
+* POST方法创建任务
+* PUT方法全更新资源
+* PATCH方法局部更新
+* DELETE方法删除
+* 请求验证
+
+HTTP请求方法
+* 请求目标路由即API的URI地址
+* GET方法获取资源数据
+* POST方法提交指定资源
+* PUT方法完整更新已有资源
+* PATCH方法更新部分资源
+* DELETE方法删除资源
+
+#### 创建资源文件
+为配合本部分演示：
+```
+const todoList = [
+    {
+        title: 'Shopping',
+        dateCreated: 'Jan 21, 2018',
+        list: [
+            { text: 'Node.js Books', done: false },
+            { text: 'MacBook', done: false },
+            { text: 'Shoes', done: true}
+        ]
+    },
+    {
+        title: 'Places to visit',
+        dateCreated: 'Feb 12, 2018',
+        list: [
+            { text: 'Nairobi, Kenya', done: false },
+            { text: 'Moscow, Russia', done: false }
+        ]
+    }
+];
+
+module.exports = [
+    {
+        method: 'GET',
+        path: '/todo',
+        handler: (request, h) => {
+            return todoList;
+        }
+    },
+    {
+        method: 'GET',
+        path: '/todo/{id}',
+        handler: (request, h) => {
+            const id = request.params.id - 1;
+            if (todoList[id]) return todoList[id];
+            return h.response({message: 'Not Found'}).code(404);
+        }
+    },
+    {
+        method: 'POST',
+        path: '/todo',
+        handler: (request, h) => {
+            const  todo = request.payload;
+            todoList.push(todo);
+            return h.response({message: 'Created'});
+        }
+    },
+    {
+        method: 'PUT',
+        path: '/todo/{id}',
+        handler: (request, h) => {
+            const  id = request.params.id - 1;
+            todoList[id] = request.payload;
+            return h.response({message: 'Updated'});
+        }
+    },
+    {
+        method: 'PATCH',
+        path: '/todo/{id}',
+        handler: (request, h) => {
+            const  id = request.params.id - 1;
+            const todo = todoList[id];
+            Object.keys(request.payload).forEach ( key => {
+                if (key in todo) {
+                    todo[key] = request.payload[key];
+                }
+            });
+            return h.response( { message: "Patched" });
+        }
+    },
+    {
+        method: 'DELETE',
+        path: '/todo/{id}',
+        handler: (request, h) => {
+            const  id = request.params.id - 1;
+            delete todoList[id];
+            return h.response({message: 'Deleted'});
+        }
+    }
+]
+```
+
+#### 更新Hapi服务器
+引用资源并配置路由：
+```
+const Hapi = require('hapi');
+// 更新添加如下两条语句，引用资源
+const routes ={};
+routes.todo = require('./0_todo');
+
+const init = async () => {
+
+    const server = Hapi.server({
+        port: 3000,
+        host: 'localhost'
+    });
+
+    server.route({
+        method: 'GET',
+        path:'/',
+        handler: (request, h) => {
+            return { message: 'Hello World!'};
+        }
+    });
+    // 添加如下一条语句，配置路由
+    server.route(routes.todo);
+    ...
+```
+
+注意：
+* 资源文件与Hapi服务器文件在同一文件夹
+* 从引用语句可猜到资源文件名`0_todo.js`
+* 新增路由配置在根路由之后
+
+#### 获取全部资源
+重启Hapi服务器，用API客户端GET方法访问：
+http://localhost:3000/todo
+确认可以在响应中拿到资源中定义的任务列表：
+```
+[
+  {
+    "title": "Shopping",
+    "dateCreated": "Jan 21, 2018",
+    "list": [
+      {
+        "text": "Node.js Books",
+        "done": false
+      },
+      {
+        "text": "MacBook",
+        "done": false
+      },
+      {
+        "text": "Shoes",
+        "done": true
+      }
+    ]
+  },
+  {
+    "title": "Places to visit",
+    "dateCreated": "Feb 12, 2018",
+    "list": [
+      {
+        "text": "Nairobi, Kenya",
+        "done": false
+      },
+      {
+        "text": "Moscow, Russia",
+        "done": false
+      }
+    ]
+  }
+]
+```
+
+#### 获取指定资源
+用API客户端GET方法访问：
+http://localhost:3000/todo/1
+确认可以在响应中拿到资源中的指定任务：
+```
+{
+  "title": "Shopping",
+  "dateCreated": "Jan 21, 2018",
+  "list": [
+    {
+      "text": "Node.js Books",
+      "done": false
+    },
+    {
+      "text": "MacBook",
+      "done": false
+    },
+    {
+      "text": "Shoes",
+      "done": true
+    }
+  ]
+}
+```
+
+#### 添加资源
+用API客户端POST方法访问：
+http://localhost:3000/todo
+选择请求体类型为JSON，编辑如下内容：
+```
+{
+	"title": "Language to learn",
+	"dateCreated": "9 April 2018",
+	"list": ["Italian", "Spanish"]
+}
+```
+发送请求，确认得到如下响应：
+```
+{
+  "message": "Created"
+}
+```
+使用获取全部资源或指定资源的方法确认结果。
+
+#### 全部更新
+用API客户端PUT方法访问：
+http://localhost:3000/todo/3
+选择请求体类型为JSON，编辑如下内容：
+```
+{
+	"title": "Language to learn",
+	"dateCreated": "9 April 2018",
+	"list": ["Italian", "Spanish", "Japanese"]
+}
+```
+以上请求仅更新语言列表，但需要传递完整资源记录。
+发送请求，确认得到如下响应：
+```
+{
+  "message": "Updated"
+}
+```
+使用获取全部资源或指定资源的方法确认结果。
+
+#### 局部更新
+用API客户端PATCH方法访问：
+http://localhost:3000/todo/3
+选择请求体类型为JSON，编辑如下内容：
+```
+{
+	"title": "Language learned",
+	"list": ["Italian", "Spanish"]
+}
+```
+以上请求更新标题和语言列表，不需传递冗余信息。
+发送请求，确认得到如下响应：
+```
+{
+  "message": "Patched"
+}
+```
+使用获取全部资源或指定资源的方法确认结果。
+
+#### 删除资源
+用API客户端Delete方法访问：
+http://localhost:3000/todo/3
+发送请求，确认得到如下响应：
+```
+{
+  "message": "Deleted"
+}
+```
+使用获取全部资源的GET方法，确认删除结果。
