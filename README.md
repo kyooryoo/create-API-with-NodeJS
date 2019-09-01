@@ -614,3 +614,698 @@ http://localhost:3000/todo/3
 }
 ```
 使用获取全部资源的GET方法，确认删除结果。
+
+## 改进API
+
+之前创建的API过于简单，没有数据库支持而无法长期保存数据，没有认证而可以被任何人访问，缺少测试模块。为改进API，这里使用Knex连接数据库并设计相应路由，使用JWT实现API认证，使用Lab添加测试功能。
+
+### 安装和配置MySQL服务器
+
+#### 安装
+安装程序，确认服务器运行状态，配置安全选项：
+```
+$ sudo apt update
+$ sudo apt install mysql-server
+$ sudo systemctl status mysql
+$ sudo mysql_secure_installation
+```
+
+配置root用户使用密码登录，创建管理员用户：
+```
+$ sudo mysql
+mysql> SELECT user,authentication_string,plugin,host FROM mysql.user;
+mysql> ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'P@ssw0rd';
+mysql> FLUSH PRIVILEGES;
+mysql> SELECT user,authentication_string,plugin,host FROM mysql.user;
+mysql> CREATE USER 'admin'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+mysql> GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost' WITH GRANT OPTION;
+mysql> exit
+```
+
+确认数据库管理工具可用，尝试停止和启动服务：
+```
+$ sudo mysqladmin -p -u root version
+$ sudo systemctl stop mysql
+$ sudo systemctl start mysql
+```
+
+#### 配置
+虽然也可以通过命令行操作，这里选择`MySQL Workbench`的GUI界面。
+安装完成并运行，控制台自动检测到本地安装的数据库服务器，连接并运行：
+```
+CREATE DATABASE todo;
+
+USE todo;
+
+CREATE TABLE user(
+  `id` INT PRIMARY KEY AUTO_INCREMENT,
+  `name` VARCHAR(50),
+  `email` VARCHAR(100),
+  `password` VARCHAR(200)
+);
+
+CREATE TABLE todo(
+  `id` INT PRIMARY KEY AUTO_INCREMENT,
+  `title` VARCHAR(50),
+  `date_created` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `user_id` INT,
+  FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE
+);
+
+CREATE TABLE todo_item(
+  `id` INT PRIMARY KEY AUTO_INCREMENT,
+  `text` VARCHAR(50),
+  `done` BOOLEAN,
+  `date_created` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `todo_id` INT,
+  FOREIGN KEY (`todo_id`) REFERENCES `todo` (`id`) ON DELETE CASCADE
+);
+```
+以上操作创建了`todo`数据库，在其中创建了`user`，`todo`和`todo_item`表格。
+
+创建数据库配置文件`db.js`：
+```
+const env = process.env.NODE_ENV || 'development';
+
+const configs = {
+  development: {
+    client: 'mysql',
+    connection: {
+      host: 'localhost',
+      user: 'root',
+      password: 'P@ssw0rd',
+      database: 'todo',
+      charset: 'utf8',
+    },
+  }
+};
+const Knex = require('knex')(configs[env]);
+
+module.exports = Knex;
+```
+注意更新以上代码中的密码设置为实际的配置，`P@ssw0rd`只应该作占位符。
+
+创建数据库连接测试文件`test_db.js`：
+```
+const Knex = require('./db');
+
+Knex.raw('select 1+1 as sum')
+  .catch((err) => console.log(err.message))
+  .then(([res]) => console.log('connected: ', res[0].sum));
+```
+运行并确认结果：
+```
+$ node test_db.js
+connected:  2
+```
+
+通过`MySQL Workbench`创建两个测试用户：
+```
+USE todo;
+
+INSERT INTO `user` (`id`, `name`, `email`, `password`)
+VALUE (NULL, 'Test User', 'user@example.com', MD5('P@ssw0rd'));
+INSERT INTO `user` (`id`, `name`, `email`, `password`)
+VALUE (NULL, 'Test User1', 'user1@example.com', MD5('P@ssw0rd'));
+```
+
+从现在开始将创建新的项目并使用数据库长久保存，更新`todo.js`如下：
+* 清除之前创建的样本数据`todoList`
+* 在头部添加`const Knex = require('./db')`
+
+更新并创建POST方法，
+
+用于发布新的TODO记录及其内容：
+```
+    {
+        method: 'POST',
+        path: '/todo',
+        handler: async (request, h) => {
+            const  todo = request.payload;
+            todo.user_id = 1;
+            const [todoId] = await Knex('todo').returning('id').insert(todo);
+            return h.response({message: 'Created',  todo_id: todoId });
+        }
+    },
+    {
+        method: 'POST',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const  todoItem = request.payload;
+            todoItem.todo_id = request.params.id;
+            const [id] = await Knex('todo_item').returning('id').insert(todoItem);
+            return h.response({message: 'Created',  id: id });
+        }
+    },
+```
+
+更新并创建GET方法，用户获取全部或个别TODO记录，或某个记录的详情：
+```
+   {
+        method: 'GET',
+        path: '/todo',
+        handler: async (request, h) => {
+            const userId = 1;
+            const todos = await  Knex('todo').where('user_id', userId);
+            return h.response(todos);
+        }
+    },
+    {
+        method: 'GET',
+        path: '/todo/{id}',
+        handler: async (request, h) => {
+            const id = request.params.id;
+            const userId = 1;
+            const [todo] = await  Knex('todo').where({id: id, user_id: userId});
+            if (todo) return h.response(todo);
+            return h.response({message: 'Not found'}).code(404);
+        }
+    },
+    {
+        method: 'GET',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const todoId = request.params.id;
+            const items = await Knex('todo_item').where('todo_id', todoId);
+            return h.response(items);
+        }
+    },
+```
+
+更新并创建PATCH方法，用于更新某个TODO记录的标题或内容：
+```
+    {
+        method: 'PATCH',
+        path: '/todo/{id}',
+        handler: async (request, h) => {
+            const  todoId = request.params.id;
+            const title = request.payload.title;
+            const patched = await Knex('todo').update({title: title}).where('id', todoId);
+            return h.response( { message: "Patched", patched: patched });
+        }
+    },
+    {
+        method: 'PATCH',
+        path: '/todo/{todo_id}/item/{id}',
+        handler: async (request, h) => {
+            const  itemId = request.params.id;
+            const item = request.payload;
+            const patched = await Knex('todo_item').update(item).where('id', itemId);
+            return h.response( { message: "Patched", patched: patched });
+        }
+    },
+```
+
+更新并创建DELETE方法，用于删除个别TODO记录或其中个别项目：
+```
+    {
+        method: 'DELETE',
+        path: '/todo/{id}',
+        handler: async (request, h) => {
+            const  id = request.params.id;
+            const deleted = await Knex('todo').where('id', id).delete();
+            return h.response({message: 'Deleted', deleted: deleted});
+        }
+    },
+    {
+        method: 'DELETE',
+        path: '/todo/{todo_id}/item/{id}',
+        handler: async (request, h) => {
+            const  id = request.params.id;
+            const deleted = await Knex('todo_item').where('id', id).delete();
+            return h.response({message: 'Deleted', deleted: deleted});
+        }
+    }
+```
+
+#### 清理路由
+经过以上设置，方法PUT已经不会用到，可直接移除。另外，通过`Joi`模块验证提交的内容，更新`todo.js`：
+```
+const Knex = require('./12_db');
+const Joi = require('joi');
+....
+{
+        method: 'POST',
+        path: '/todo',
+        handler: async (request, h) => {
+            const  todo = request.payload;
+            todo.user_id = 1;
+            const [todoId] = await Knex('todo').returning('id').insert(todo);
+            return h.response({message: 'Created',  todo_id: todoId });
+        },
+        config: {
+            validate: {
+                payload: {
+                    title: Joi.string().required()
+                }
+            }
+        }
+    },
+    {
+        method: 'POST',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const  todoItem = request.payload;
+            todoItem.todo_id = request.params.id;
+            const [id] = await Knex('todo_item').returning('id').insert(todoItem);
+            return h.response({message: 'Created',  id: id });
+        },
+        config: {
+            validate: {
+                payload: {
+                    text: Joi.string().required()
+                }
+            }
+        }
+    },
+...
+    {
+        method: 'PATCH',
+        path: '/todo/{id}',
+        handler: async (request, h) => {
+            const  todoId = request.params.id;
+            const title = request.payload.title;
+            const patched = await Knex('todo').update({title: title}).where('id', todoId);
+            return h.response( { message: "Patched", patched: patched });
+        },
+        config: {
+            validate: {
+                payload: {
+                    title: Joi.string().required()
+                }
+            }
+        }
+    },
+    {
+        method: 'PATCH',
+        path: '/todo/{todo_id}/item/{id}',
+        handler: async (request, h) => {
+            const  itemId = request.params.id;
+            const item = request.payload;
+            const patched = await Knex('todo_item').update(item).where('id', itemId);
+            return h.response( { message: "Patched", patched: patched });
+        },
+        config: {
+            validate: {
+                payload: {
+                    text: Joi.string().required(),
+                    done: Joi.boolean()
+                }
+            }
+        }
+    },
+....
+```
+
+验证配置，如果提交的内容在字段名和内容类型上不匹配，会得到如下错误：
+```
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": "Invalid request payload input"
+}
+```
+
+另外，虽然这里好像不用单独安装`Joi`模块也不会报错，但之后在JWT应该是作为内建模块加载了。
+
+### JWT认证
+
+发布生产的API不可能没有认证机和授权机制，这里添加基于JSON Web Tokens的认证功能。用户在API请求信息的头部添加JWT认证令牌，用`Bearer`标识。为此，安装JWT和MD5模块：
+```
+$ npm install jsonwebtoken md5 --save
+```
+
+创建JWT认证模块配置文件：
+```
+const jwt = require('jsonwebtoken');
+const Joi = require('joi');
+const md5 = require('md5');
+const Knex = require('./db');
+
+module.exports = {
+    method: 'POST',
+    path: '/auth',
+    handler: async (request, h) => {
+        const { email, password } = request.payload;
+        const [user] = await Knex('user').where({email: email});
+
+        if(!user) {
+            return h.response({message: 'user not found'}).code(404);
+        }
+
+        if (user.password == md5(password)) {
+            const token = jwt.sign(
+                {
+                    name: user.name,
+                    emal: user.email,
+                    id: user.id
+                },
+                'secretkey-hash',
+                {
+                    algorithm: 'HS256',
+                    expiresIn: '120d'
+                }
+            );
+            return h.response({token: token, uid: user.uid});
+        }
+        return h.response({message: 'incorrect password'}).code(400);
+    },
+    config: {
+        validate: {
+            payload: {
+                email: Joi.string().email().required(),
+                password: Joi.string().required()
+            }
+        }
+    }
+}
+```
+
+以上认证配置和模块导出文件做了如下设置：
+* 指定访问路径和方法，请求处理方法和数据验证
+* 从请求体解析得到邮箱和密码，从邮箱查找用户
+* 找不到用户则返回错误提示，密码错误时也提示
+* 根据查询到的用户信息生成认证令牌并将其返回
+
+更新服务器配置`server.js`，启用JWT认证：
+```
+const Hapi = require('hapi');
+const Knex = require('./12_db');
+
+const routes ={};
+routes.todo = require('./0_todo');
+routes.auth = require('./14_auth');
+
+// 验证令牌中拿到的邮箱信息，作为用户唯一标识，有效
+const validate = async function (decoded, request) {
+    // 以下控制台日志用于调试，确认令牌解析结果中的邮箱信息正确
+    // console.log(decoded.email);
+    const [user] = await Knex('user').where({email: decoded.email});
+    // 以下日志语句用于调试，确认拿到的用户信息完整且准确
+    // console.log([user]);
+    if (![user]) { return { isValid: false }; }
+    else { return { isValid: true }; }
+};
+
+const init = async () => {
+
+    const server = new Hapi.server({ port: 8000 });
+
+    // 引用为Hapi启用JWT支持的模块，需要先NPM安装
+    await server.register(require('hapi-auth-jwt2'));
+
+    server.auth.strategy('token', 'jwt', {
+        key: 'secretkey-hash',  // 可以使用更强密钥，注意auth文件同步修改
+        validate: validate,  // 调用之前独立定义的验证函数
+        verifyOptions: { algorithms: [ 'HS256' ] }
+    });
+
+    // 定义路由
+    // 根页面
+    server.route({
+        method: 'GET',
+        path:'/',
+        config: { auth: 'token' }, // 配置为`false`可关闭根页面的JWT认证
+        handler: (request, h) => {
+            return h.response({ message: 'Hello World!'});
+        }
+    });
+    // JWT令牌获取页面，需要关闭JWT认证
+    server.route(routes.auth);
+    // todo页面的批量认证设置
+    const authRoutes = routes.todo.map(route => {
+        route.config = { auth: 'token' }; // 配置为`false`可关闭所有todo页面的JWT认证
+        return route;
+    });
+    server.route(authRoutes);
+
+    // 启用日志
+    await server.register({
+        plugin: require('good'),
+        options: {
+            ops: {
+                interval: 1000000
+            },
+            reporters: {
+                consoleReporters: [
+                    { module: 'good-console' },
+                    'stdout'
+                ]
+            }
+        }
+    });
+
+    await server.start();
+    console.log('Server running on %s', server.info.uri);
+};
+
+process.on('unhandledRejection', (err) => {
+    console.log(err);
+    process.exit(1);
+});
+
+init();
+```
+
+#### 验证
+生成JWT令牌，在Insomnia访问`http://<server_url>/auth`用POST发送JSON请求体：
+```
+{
+	"email": "user@example.com",
+	"password": "P@ssw0rd"
+}
+```
+如果在`MySQL Workbench`配置了如上用户会得到令牌，如果用户名或密码错误会得到相应的错误提示。
+
+复制生成的令牌，在Insomnia用GET方法访问以下地址，或逐一验证todo的所有路由：
+* http://<server_url>/
+* http://<server_url>/todo
+应该可以看到根页面欢迎词和TODO事项列表，其他深入测试和反向试错测试请自便。
+
+#### 优化
+之前`todo.js`路由设置使用硬编码的用户ID，现在启用认证后可以使用认证信息中的用户ID：
+```
+    {
+        method: 'GET',
+        path: '/todo',
+        handler: async (request, h) => {
+            // 不再使用硬编码的用户ID，而是从请求的认证信息中动态获取
+            // const userId = 1;
+            const userId = request.auth.credentials.id;
+
+            const todos = await  Knex('todo').where('user_id', userId);
+            return h.response(todos);
+        }
+    },
+```
+以上类似修改同样实施到其他涉及用户ID的todo路由设置，这里不赘述。完成后手动测试确认。
+
+接着，需要限制用户只能访问由其创建的TODO项目，为此再次更新`todo.js`路由设置：
+```
+    {
+        method: 'GET',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const todoId = request.params.id;
+
+            // 增加以下一节代码，确认只有用户自己可以查看所属的TODO事项详情
+            const userId = request.auth.credentials.id;
+            const [todo] = await Knex('todo').where({ id: todoId, user_id: userId });
+            if (!todo) {
+                return h.response({ message: 'Not authorized' }).code(401);
+            }
+
+            const items = await Knex('todo_item').where('todo_id', todoId);
+            return h.response(items);
+        }
+    },
+```
+以上增加的代码段也可以同样实施到其他合适的路由，这里不赘述。为进一步验证访问限制功能有效，重复之前创建用户和发布TODO项目的步骤，使用用户`Test User1`创建项目，手动反向测试确认非所有者用户无法查看他人TODO项目。
+
+
+### 单元测试
+
+测试对代码维护、确认需求和开发流程都有益，这里添加基本测试功能，先安装所需模块：
+```
+$ npm install gulp gulp-shell gulp-watch lab --save-dev
+```
+
+更新`db.js`，为测试环境作配置，在`const configs`和`const Knex`之间添加命令：
+```
+...
+const configs = {
+  development: {
+    ...
+  }
+};
+// 添加如下一行设置，即测试使用开发配置
+configs.test = configs.development;
+const Knex = require('knex')(configs[env]);
+...
+```
+
+更新`server.js`，调整端口和主页认证配置：
+```
+```
+
+创建`test_todo.js`测试文件：
+```
+const assert = require('assert');
+const Lab = require('lab');
+const lab = exports.lab = Lab.script();
+const server = require('./server');
+
+const {
+  experiment,
+  test,
+  before,
+} = lab;
+
+experiment('Base API', () => {
+  test('GET: /', () => {
+    const options = {
+      method: 'GET',
+      url: '/',
+    };
+    server.inject(options, (response) => {
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.result.message, 'hello, world');
+    });
+  });
+});
+```
+
+运行测试，确认可以通过：
+```
+$ PORT=8080 ./node_modules/lab/bin/lab test_todo.js --leaks
+...
+1 tests complete
+Test duration: 241 ms
+```
+
+修改`package.json`文件，添加自动测试脚本：
+```
+  "scripts": {
+    "test": "PORT=8080 ./node_modules/lab/bin/lab test_todo.js --leaks"
+  },
+```
+
+更新`test_todo.js`测试文件，添加测试项验证无认证时的访问结果：
+```
+experiment('Authentication', () => {
+  test('GET: /todo without auth', () => {
+    const options = {
+      method: 'GET',
+      url: '/todo'
+    };
+    server.inject(options, (response) => {
+      assert.equal(response.statusCode, 401);
+    });
+  });
+});
+```
+
+运行测试：
+```
+$ npm test
+...
+2 tests complete
+Test duration: 298 ms
+```
+
+使用Gulp模块创建`gulpfile.js`为API客户端提供自动测试功能：
+```
+const gulp = require('gulp');
+const shell = require('gulp-shell');
+const watch = require('gulp-watch');
+
+const src = [
+  './auth.js',
+  './todo.js',
+  './test_todo.js',
+  './db.js',
+  './server.js',
+];
+
+gulp.task('test:dev', () => {
+  watch(src, () => gulp.run('test'));
+});
+
+gulp.task('test', shell.task('npm test'));
+```
+
+再次更新`package.json`，追加基于Gulp的测试脚本：
+```
+  "scripts": {
+    "test": "PORT=8080 ./node_modules/lab/bin/lab 15_test_todo.js --leaks",
+    // 追加以下一行脚本使用Gulp发起自动测试
+    "test:dev": "./node_modules/.bin/gulp test:dev"
+  },
+```
+
+运行自动测试命令，遇到以下问题，没有排除：
+```
+$ npm run test:dev
+> create-API-with-NodeJS@1.0.0 test:dev /home/user/Workspace/create-API-with-NodeJS
+> gulp test:dev
+[20:00:36] Using gulpfile ~/Workspace/create-API-with-NodeJS/gulpfile.js
+[20:00:36] Starting 'test:dev'...
+(node:10848) UnhandledPromiseRejectionWarning: TypeError: gulp.run is not a function
+    at watch (/home/user/Workspace/create-API-with-NodeJS/gulpfile.js:14:25)
+    at write (/home/user/Workspace/create-API-with-NodeJS/node_modules/gulp-watch/index.js:148:3)
+    at /home/user/Workspace/create-API-with-NodeJS/node_modules/gulp-watch/index.js:131:5
+(node:10848) UnhandledPromiseRejectionWarning: Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). (rejection id: 1)
+(node:10848) [DEP0018] DeprecationWarning: Unhandled promise rejections are deprecated. In the future, promise rejections that are not handled will terminate the Node.js process with a non-zero exit code.
+```
+
+更新`test_todo.js`，添加最后一段测试带JWT认证的访问：
+```
+experiment('/todo/* routes', () => {
+  const headers = {
+    Authorization: 'Bearer ',
+  };
+  before(() => {
+    const options = {
+      method: 'POST',
+      url: '/auth',
+      payload: {
+        email: 'user@example.com',
+        password: 'P@ssw0rd',
+      },
+    };
+    return new Promise((done) => {
+      server.inject(options, (response) => {
+        headers.Authorization += response.result.token;
+        done();
+      });
+    });
+  });
+
+  test('GET: /todo', () => {
+    const options = {
+      method: 'GET',
+      url: '/todo',
+      headers: headers,
+    };
+    return new Promise((done) => {
+      server.inject(options, (response) => {
+        assert.equal(Array.isArray(response.result), true);
+        assert.equal(response.statusCode, 200);
+        done();
+      });
+    }).catch(error => { throw error});
+  });
+});
+```
+
+运行测试：
+```
+$ npm test
+> create-API-with-NodeJS@1.0.0 test /home/user/Workspace/create-API-with-NodeJS
+> PORT=8080 ./node_modules/lab/bin/lab 15_test_todo.js --leaks
+..[response] http://user-asus:8080: get / {} 200 (41ms)
+..[response] http://user-asus:8080: get /todo {} 401 (16ms)
+..[response] http://user-asus:8080: post /auth {} 200 (254ms)
+```
+
+虽然没有得到类似`3 tests complete`的明确提示，但从以上结果和反向测试可以确认测试已经通过。比起这个小问题，更大的问题是Gulp模块没能顺利启用，测试不会因为监视文件的更新而自动触发。这是由于相关模块更新和过往方法（gulp.run）被停用而造成，目前还没有找到解决办法。

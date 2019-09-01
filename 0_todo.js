@@ -1,79 +1,126 @@
-const todoList = [
-    {
-        title: 'Shopping',
-        dateCreated: 'Jan 21, 2018',
-        list: [
-            { text: 'Node.js Books', done: false },
-            { text: 'MacBook', done: false },
-            { text: 'Shoes', done: true}
-        ]
-    },
-    {
-        title: 'Places to visit',
-        dateCreated: 'Feb 12, 2018',
-        list: [
-            { text: 'Nairobi, Kenya', done: false },
-            { text: 'Moscow, Russia', done: false }
-        ]
-    }
-]
+const Knex = require('./12_db');
+const Joi = require('joi');
 
 module.exports = [
     {
         method: 'GET',
         path: '/todo',
-        handler: (request, h) => {
-            return todoList;
+        handler: async (request, h) => {
+            const userId = request.auth.credentials.id;
+            const todos = await  Knex('todo').where('user_id', userId);
+            return h.response(todos);
         }
     },
     {
         method: 'GET',
         path: '/todo/{id}',
-        handler: (request, h) => {
-            const id = request.params.id - 1;
-            if (todoList[id]) return todoList[id];
+        handler: async (request, h) => {
+            const todoId = request.params.id;
+            const userId = request.auth.credentials.id;
+            const [todo] = await  Knex('todo').where({id: todoId, user_id: userId});
+            if (todo) return h.response(todo);
             return h.response({message: 'Not found'}).code(404);
+        }
+    },
+    {
+        method: 'GET',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const todoId = request.params.id;
+            const userId = request.auth.credentials.id;
+            const [todo] = await Knex('todo').where({ id: todoId, user_id: userId });
+            if (!todo) {
+                return h.response({ message: 'Not authorized' }).code(401);
+            }
+            const items = await Knex('todo_item').where('todo_id', todoId);
+            return h.response(items);
         }
     },
     {
         method: 'POST',
         path: '/todo',
-        handler: (request, h) => {
-            const  todo = request.payload;
-            todoList.push(todo);
-            return h.response({message: 'Created'});
+        handler: async (request, h) => {
+            const todo = request.payload;
+            todo.user_id = request.auth.credentials.id;
+            const [todoId] = await Knex('todo').insert(todo);
+            return h.response({message: 'Created',  todo_id: todoId });
+        },
+        config: {
+            validate: {
+                payload: {
+                    title: Joi.string().required()
+                }
+            }
         }
     },
     {
-        method: 'PUT',
-        path: '/todo/{id}',
-        handler: (request, h) => {
-            const  id = request.params.id - 1;
-            todoList[id] = request.payload;
-            return h.response({message: 'Updated'});
+        method: 'POST',
+        path: '/todo/{id}/item',
+        handler: async (request, h) => {
+            const  todoItem = request.payload;
+            todoItem.todo_id = request.params.id;
+            const [id] = await Knex('todo_item').returning('id').insert(todoItem);
+            return h.response({message: 'Created',  id: id });
+        },
+        config: {
+            validate: {
+                payload: {
+                    text: Joi.string().required()
+                }
+            }
         }
     },
     {
         method: 'PATCH',
         path: '/todo/{id}',
-        handler: (request, h) => {
-            const  id = request.params.id - 1;
-            const todo = todoList[id];
-            Object.keys(request.payload).forEach ( key => {
-                if (key in todo) {
-                    todo[key] = request.payload[key];
+        handler: async (request, h) => {
+            const  todoId = request.params.id;
+            const title = request.payload.title;
+            const patched = await Knex('todo').update({title: title}).where('id', todoId);
+            return h.response( { message: "Patched", patched: patched });
+        },
+        config: {
+            validate: {
+                payload: {
+                    title: Joi.string().required()
                 }
-            });
+            }
+        }
+    },
+    {
+        method: 'PATCH',
+        path: '/todo/{todo_id}/item/{id}',
+        handler: async (request, h) => {
+            const  itemId = request.params.id;
+            const item = request.payload;
+            const patched = await Knex('todo_item').update(item).where('id', itemId);
             return h.response( { message: "Patched" });
+        },
+        config: {
+            validate: {
+                payload: {
+                    text: Joi.string().required(),
+                    done: Joi.boolean()
+                }
+            }
         }
     },
     {
         method: 'DELETE',
         path: '/todo/{id}',
-        handler: (request, h) => {
-            const  id = request.params.id - 1;
-            delete todoList[id];
-            return h.response({message: 'Deleted'});
+        handler: async (request, h) => {
+            const  id = request.params.id;
+            const deleted = await Knex('todo').where('id', id).delete();
+            return h.response({message: 'Deleted', deleted: deleted});
+        }
+    },
+    {
+        method: 'DELETE',
+        path: '/todo/{todo_id}/item/{id}',
+        handler: async (request, h) => {
+            const  id = request.params.id;
+            const deleted = await Knex('todo_item').where('id', id).delete();
+            return h.response({message: 'Deleted', deleted: deleted});
         }
     }
 ]

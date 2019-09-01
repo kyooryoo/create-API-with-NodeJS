@@ -7,18 +7,30 @@
     "good": "^8.1.2",
     "good-console": "^8.0.0",
     "hapi": "^18.1.0",
+    "hapi-auth-jwt": "^4.0.0",
+    "hapi-auth-jwt2": "^8.6.2",
+    "jsonwebtoken": "^8.5.1",
+    "knex": "^0.19.3",
+    "md5": "^2.2.1",
+    "mysql": "^2.17.1",
     "request": "^2.88.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "gulp": "^4.0.2",
+    "gulp-shell": "^0.7.1",
+    "gulp-watch": "^5.0.1",
+    "lab": "^18.0.2"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "PORT=8080 ./node_modules/lab/bin/lab 15_test_todo.js --leaks",
+    "test:dev": "./node_modules/.bin/gulp test:dev"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kyooryoo/create-API-with-NodeJS.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "Ling Jiang",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/kyooryoo/create-API-with-NodeJS/issues"
